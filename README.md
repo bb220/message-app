@@ -55,4 +55,4 @@ After configuring the slack application in your workspace, @ or DM your slackbot
 
 ---
 
-🏄 [brandon bellero](https://www.brandonbellero.com/)
+🏄 [brandonbellero](https://www.brandonbellero.com/)
