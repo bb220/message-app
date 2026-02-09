@@ -1,5 +1,6 @@
 import logging
-from fastapi import FastAPI, HTTPException
+import time
+from fastapi import FastAPI, HTTPException, Request
 from openai import OpenAI
 from openai.types.responses.response_input_param import ResponseInputParam
 from pydantic import BaseModel
@@ -47,6 +48,14 @@ class MessageRecord(BaseModel):
     user_message: str
     assistant_response: str
 
+# Middleware to log request durations
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    duration = time.time() - start_time
+    logger.info(f"{request.method} {request.url} completed_in={duration:.4f}s status_code={response.status_code}")
+    return response
 
 @app.get("/")
 def health_check():
