@@ -1,15 +1,21 @@
 import logging
+import re
 import time
+import json
 from fastapi import FastAPI, HTTPException, Request
 from openai import OpenAI
 from openai.types.responses.response_input_param import ResponseInputParam
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from database import init_db, get_session, Message
+from slack_sdk import WebClient
+from slack_utils import verify_slack_signature
 
 
 class Settings(BaseSettings):
     openai_api_key: str = ""
+    slack_bot_token: str = ""
+    slack_signing_secret: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -37,6 +43,9 @@ app = FastAPI()
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=settings.openai_api_key)
+
+# Initialize slack client
+slack_client = WebClient(token=settings.slack_bot_token)
 
 
 class SMSRequest(BaseModel):
@@ -145,3 +154,70 @@ def receive_sms(payload: SMSRequest):
     
     finally:
         session.close()
+
+#Basic post endpoint with slack integration
+@app.post("/slack/events")
+async def slack_events(request: Request):
+    # Get headers
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    slack_signature = request.headers.get("X-Slack-Signature", "")
+
+    #Get raw body
+    body = await request.body()
+    body = body.decode('utf-8')
+
+    if not verify_slack_signature(
+        settings.slack_signing_secret,
+        timestamp,
+        body,
+        slack_signature
+    ):
+        logger.warning("Invalid Slack signature")
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    
+    payload = json.loads(body)
+    event_type = payload.get("type")
+
+    ## Slack sends this URL verification challenge when setting up event subscriptions
+    if event_type == "url_verification":
+        logger.info("Responding to Slack URL verification challenge")
+        return {"challenge": payload.get("challenge")}
+    
+    if event_type == "event_callback":
+        event = payload.get("event", {})
+        event_subtype = event.get("type")
+
+        # Only handle mentions and DMs
+        if event_subtype not in ["app_mention", "message"]:
+            return {"ok": True}
+        
+        # Ignore messages from bots
+        if event.get("bot_id"):
+            logger.info("Ignoring bot message")
+            return {"ok": True}
+        
+        # Grab and clean message text (remove bot mention)
+        text = event.get("text", "")
+        text = re.sub(r"<@[\w]+>", "", text).strip()
+
+        if not text:
+            return {"ok": True}
+        
+        logger.info(f"Received Slack message: {text[:50]}")
+    
+        ## TODO: Add custom logic
+
+        ## Then respond to Slack
+        try:
+            channel = event.get("channel")
+
+            slack_client.chat_postMessage(
+                channel=channel,
+                text="new response message"
+            )
+            logger.info("Posted response back to Slack")
+
+        except Exception as e:
+            logger.error(f"Error posting message to Slack: {str(e)}")
+
+        return {"ok": True}
