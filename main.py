@@ -58,6 +58,10 @@ class MessageRecord(BaseModel):
     user_message: str
     assistant_response: str
 
+SYSTEM_PROMPT = """
+You are a helpful assistant responding to messages. Keep responses concise and friendly.
+"""
+
 async def verify_api_key(x_api_key: str = Header(...)):
     if not settings.api_key:
         raise HTTPException(status_code=500, detail="API Key not configured on server")
@@ -65,6 +69,68 @@ async def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
     return x_api_key
+
+def process_message(user_message: str):
+    # Build conversation history
+    conversation: ResponseInputParam = [
+        {
+            "role": "developer",
+            "content": SYSTEM_PROMPT,
+        }
+    ]
+    
+    session = get_session()
+
+    try:
+        try:
+            # Load previous messages from the database
+            db_messages = session.query(Message).all()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+        # Add previous messages to conversation
+        for msg in db_messages:
+            conversation.append({"role": msg.role, "content": msg.content})
+
+        # Add current message
+        conversation.append({"role": "user", "content": user_message})
+
+        # Call OpenAI Responses API
+        try:
+            response = openai_client.responses.create(
+                model="gpt-4.1", input=conversation
+            )
+
+            assistant_message = response.output_text
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error calling OpenAI API: {str(e)}"
+            )
+
+        try:
+            # Save messages to the database
+            user_msg = Message(
+                role="user",
+                content=user_message
+            )
+            assistant_msg = Message(
+                role="assistant",
+                content=assistant_message
+            )
+            
+            messages = [user_msg, assistant_msg]
+            session.add_all(messages)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=f"Error saving messages to database: {str(e)}")
+
+        return {"response": assistant_message}
+    
+    finally:
+        session.close()
+    
 
 # Middleware to log request durations
 @app.middleware("http")
@@ -94,75 +160,13 @@ def get_messages(_: str = Depends(verify_api_key)):
     finally:
         session.close()
 
-    
-
-SYSTEM_PROMPT = """
-You are a helpful assistant responding to messages. Keep responses concise and friendly.
-"""
-
 @app.post("/sms")
 def receive_sms(payload: SMSRequest, _: str = Depends(verify_api_key)):
     if not payload.message:
         raise HTTPException(status_code=400, detail="message is required")
 
-    # Build conversation history
-    conversation: ResponseInputParam = [
-        {
-            "role": "developer",
-            "content": SYSTEM_PROMPT,
-        }
-    ]
-
-    session = get_session()
-    try:
-        try:
-            # Load previous messages from the database
-            db_messages = session.query(Message).all()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-        
-        # Add previous messages to conversation
-        for msg in db_messages:
-            conversation.append({"role": msg.role, "content": msg.content})
-
-        # Add current message
-        conversation.append({"role": "user", "content": payload.message})
-
-        # Call OpenAI Responses API
-        try:
-            response = openai_client.responses.create(
-                model="gpt-4.1", input=conversation
-            )
-
-            assistant_message = response.output_text
-
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Error calling OpenAI API: {str(e)}"
-            )
-
-        try:
-            # Save messages to the database
-            user_msg = Message(
-                role="user",
-                content=payload.message
-            )
-            assistant_msg = Message(
-                role="assistant",
-                content=assistant_message
-            )
-            
-            messages = [user_msg, assistant_msg]
-            session.add_all(messages)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            raise HTTPException(status_code=500, detail=f"Error saving messages to database: {str(e)}")
-
-        return {"response": assistant_message}
-    
-    finally:
-        session.close()
+    result = process_message(payload.message)
+    return result
 
 #Basic post endpoint with slack integration
 @app.post("/slack/events")
@@ -214,62 +218,8 @@ async def slack_events(request: Request):
         
         logger.info(f"Received Slack message: {text[:50]}")
     
-        ## TODO: Add custom logic
-        conversation: ResponseInputParam = [
-            {
-                "role": "developer",
-                "content": SYSTEM_PROMPT,
-            }
-        ]
-
-        session = get_session()
-        try:
-            try:
-                # Load previous messages from the database
-                db_messages = session.query(Message).all()
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-            
-            # Add previous messages to conversation
-            for msg in db_messages:
-                conversation.append({"role": msg.role, "content": msg.content})
-
-            # Add current message
-            conversation.append({"role": "user", "content": text})
-
-            # Call OpenAI Responses API
-            try:
-                response = openai_client.responses.create(
-                    model="gpt-4.1", input=conversation
-                )
-
-                assistant_message = response.output_text
-
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500, detail=f"Error calling OpenAI API: {str(e)}"
-                )
-
-            try:
-                # Save messages to the database
-                user_msg = Message(
-                    role="user",
-                    content=text
-                )
-                assistant_msg = Message(
-                    role="assistant",
-                    content=assistant_message
-                )
-                
-                messages = [user_msg, assistant_msg]
-                session.add_all(messages)
-                session.commit()
-            except Exception as e:
-                session.rollback()
-                raise HTTPException(status_code=500, detail=f"Error saving messages to database: {str(e)}")
-        
-        finally:
-            session.close()
+        result = process_message(text)
+        assistant_message = result["response"]
 
         ## Then respond to Slack
         try:
