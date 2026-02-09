@@ -1,0 +1,14 @@
+[project]
+name = "app-starter"
+version = "0.1.0"
+description = "Application with basic extension patterns"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.118.0",
+    "mypy>=1.18.2",
+    "openai>=2.0.1",
+    "pydantic-settings>=2.11.0",
+    "ruff>=0.13.2",
+    "ty>=0.0.1a21",
+    "uvicorn[standard]>=0.37.0",
+]
