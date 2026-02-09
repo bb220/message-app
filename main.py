@@ -2,7 +2,7 @@ import logging
 import re
 import time
 import json
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import Depends, FastAPI, HTTPException, Header, Request
 from openai import OpenAI
 from openai.types.responses.response_input_param import ResponseInputParam
 from pydantic import BaseModel
@@ -81,7 +81,7 @@ def health_check():
 
 
 @app.get("/messages")
-def get_messages():
+def get_messages(_: str = Depends(verify_api_key)):
     """Retrieve all stored messages."""
 
     session = get_session()
@@ -101,7 +101,7 @@ You are a helpful assistant responding to messages. Keep responses concise and f
 """
 
 @app.post("/sms")
-def receive_sms(payload: SMSRequest):
+def receive_sms(payload: SMSRequest, _: str = Depends(verify_api_key)):
     if not payload.message:
         raise HTTPException(status_code=400, detail="message is required")
 
