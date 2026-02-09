@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI, HTTPException
 from openai import OpenAI
 from openai.types.responses.response_input_param import ResponseInputParam
@@ -11,14 +12,27 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
 
 # Load settings
 settings = Settings()
 
-app = FastAPI(title="basic-app")
+# Logger instance
+logger = logging.getLogger(__name__)
 
 # Initialize database
 init_db() 
+
+# Initialize FastAPI app
+app = FastAPI()
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=settings.openai_api_key)
