@@ -2,7 +2,7 @@ import logging
 import re
 import time
 import json
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Header, Request
 from openai import OpenAI
 from openai.types.responses.response_input_param import ResponseInputParam
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
+    api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -56,6 +57,14 @@ class MessageRecord(BaseModel):
     timestamp: str
     user_message: str
     assistant_response: str
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    if not settings.api_key:
+        raise HTTPException(status_code=500, detail="API Key not configured on server")
+    if x_api_key != settings.api_key:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    
+    return x_api_key
 
 # Middleware to log request durations
 @app.middleware("http")
