@@ -1,5 +1,5 @@
 from sqlalchemy import Column, DateTime, Integer, String, create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from datetime import datetime, timezone
 
 engine = create_engine('sqlite:///messages.db', echo=True)
