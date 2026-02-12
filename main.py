@@ -8,6 +8,7 @@ from openai.types.responses.response_input_param import ResponseInputParam
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from database import init_db, get_session, Message
+from sqlalchemy.orm import Session
 from slack_sdk import WebClient
 from slack_utils import verify_slack_signature
 
@@ -42,9 +43,6 @@ init_db()
 # Initialize FastAPI app
 app = FastAPI()
 
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=settings.openai_api_key)
-
 # Initialize slack client
 slack_client = WebClient(token=settings.slack_bot_token)
 
@@ -70,7 +68,14 @@ async def verify_api_key(x_api_key: str = Header(...)):
     
     return x_api_key
 
-def process_message(user_message: str):
+def get_openai_client():
+    return OpenAI(api_key=settings.openai_api_key)
+
+def process_message(
+    user_message: str,
+    session,
+    openai_client):
+
     # Build conversation history
     conversation: ResponseInputParam = [
         {
@@ -79,8 +84,6 @@ def process_message(user_message: str):
         }
     ]
     
-    session = get_session()
-
     try:
         try:
             # Load previous messages from the database
@@ -127,7 +130,7 @@ def process_message(user_message: str):
             raise HTTPException(status_code=500, detail=f"Error saving messages to database: {str(e)}")
 
         return {"response": assistant_message}
-    
+
     finally:
         session.close()
     
@@ -161,16 +164,16 @@ def get_messages(_: str = Depends(verify_api_key)):
         session.close()
 
 @app.post("/sms")
-def receive_sms(payload: SMSRequest, _: str = Depends(verify_api_key)):
+def receive_sms(payload: SMSRequest, _: str = Depends(verify_api_key), openai_client: OpenAI = Depends(get_openai_client), session: Session = Depends(get_session)):
     if not payload.message:
         raise HTTPException(status_code=400, detail="message is required")
 
-    result = process_message(payload.message)
+    result = process_message(payload.message, openai_client=openai_client, session=session)
     return result
 
 #Basic post endpoint with slack integration
 @app.post("/slack/events")
-async def slack_events(request: Request):
+async def slack_events(request: Request, openai_client: OpenAI = Depends(get_openai_client), session: Session = Depends(get_session)):
     # Get headers
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     slack_signature = request.headers.get("X-Slack-Signature", "")
@@ -218,7 +221,7 @@ async def slack_events(request: Request):
         
         logger.info(f"Received Slack message: {text[:50]}")
     
-        result = process_message(text)
+        result = process_message(text, openai_client=openai_client, session=session)
         assistant_message = result["response"]
 
         ## Then respond to Slack
